@@ -1,0 +1,7 @@
+DB
+__pycache__
+myenv
+wallet_storage
+.env
+my_seed.json
+wallet_ids.txt

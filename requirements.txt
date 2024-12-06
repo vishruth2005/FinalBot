@@ -1,0 +1,11 @@
+phidata
+ollama
+exa_py
+wikipedia
+sqlalchemy
+googlesearch-python
+pycountry
+pandas
+yfinance
+duckdb
+cdp-sdk
