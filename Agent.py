@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from cdp import *
 import os
 import json
-from phi.agent import Agent
+from phi.agent import Agent, RunResponse
 from phi.model.ollama import Ollama
 from cdp.errors import UnsupportedAssetError
 from Creator import ChatbotAnalyzer
@@ -91,7 +91,7 @@ class OnChainAgents:
             json.dump(data_dict, file)
         print(f"Wallet data for {wallet_id} successfully stored.")
 
-    def save_wallet(self):
+    def save_wallet(self,data):
         """
         Exports and saves the current wallet's data and seed to files.
 
@@ -101,7 +101,6 @@ class OnChainAgents:
 
         The process includes checking for existing IDs to prevent duplicates.
         """
-        data = self.wallet.export_data()
         self.store(data.to_dict())
         
         seed_file_path = "my_seed.json"
@@ -113,9 +112,6 @@ class OnChainAgents:
         if not self.wallet_id_exists(wallet_id, id_file_path):
             with open(id_file_path, "a") as id_file:
                 id_file.write(f"{wallet_id}\n")
-                print(f"Wallet ID {wallet_id} saved to wallet_ids.txt.")
-        else:
-            print(f"Wallet ID {wallet_id} already exists in wallet_ids.txt.")
 
     def wallet_id_exists(self, wallet_id, file_path):
         """
@@ -135,205 +131,192 @@ class OnChainAgents:
                 existing_ids = id_file.read().splitlines()
                 return wallet_id in existing_ids
         return False
+
+Tools = {
+    "Calculator": Calculator(add=True, subtract=True, multiply=True, divide=True, exponentiate=True, factorial=True, is_prime=True, square_root=True),
+    "Exa": ExaTools(api_key=os.getenv("EXA_API_KEY")),
+    "File": FileTools(),
+    "GoogleSearch": GoogleSearch(),
+    "Pandas": PandasTools(),
+    "Shell": ShellTools(),
+    "Wikipedia": WikipediaTools(),
+    "Sleep": Sleep()
+}
     
-def main():
+def read_json_data(file_path: str) -> dict:
     """
-    Main function to run the OnChainAgents interface.
-    Provides an interactive loop for loading models and asking questions.
+    Reads data from a JSON file and returns it as a dictionary.
+
+    Args:
+        file_path (str): The path to the JSON file.
+
+    Returns:
+        dict: The data read from the JSON file, or None if an error occurred.
     """
-    while True:
+    try:
+        with open(file_path, 'r') as json_file:
+            data = json.load(json_file)
+            return data
+    except FileNotFoundError:
+        print(f"Error: The file {file_path} does not exist.")
+    except json.JSONDecodeError:
+        print("Error: Failed to decode JSON from the file.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    return None
 
-        Tools = {
-            "Calculator": Calculator(add=True, subtract=True, multiply=True, divide=True, exponentiate=True, factorial=True, is_prime=True, square_root=True),
-            "Exa": ExaTools(api_key=os.getenv("EXA_API_KEY")),
-            "File": FileTools(),
-            "GoogleSearch": GoogleSearch(),
-            "Pandas": PandasTools(),
-            "Shell": ShellTools(),
-            "Wikipedia": WikipediaTools(),
-            "Sleep": Sleep()
-        }
-        def get_balance(asset_id) -> str:
-            """
-            Get the balance of a specific asset in the agent's wallet.
-            
-            Parameters:
-            asset_id (str): Asset identifier ("eth", "usdc") or contract address of an ERC-20 token
-            
-            Returns:
-            str: A message showing the current balance of the specified asset.
-            """
-            balance = agent.wallet.balance(asset_id)
-            return f"Current balance of {asset_id}: {balance}"
-
-        def create_token(name, symbol, initial_supply):
-            """
-            Create a new ERC-20 token.
-            
-            Parameters:
-            name (str): The name of the token.
-            symbol (str): The symbol of the token.
-            initial_supply (int): The initial supply of tokens.
-            
-            Returns:
-            str: A message confirming the token creation with details.
-            """
-            deployed_contract = agent.wallet.deploy_token(name, symbol, initial_supply)
-            deployed_contract.wait()
-            return f"Token {name} ({symbol}) created with initial supply of {initial_supply} and contract address {deployed_contract.contract_address}"
-
-        def transfer_asset(amount, asset_id, destination_address):
-            """
-            Transfer an asset to a specific address.
-            
-            Parameters:
-            amount (Union[int, float, Decimal]): Amount to transfer.
-            asset_id (str): Asset identifier ("eth", "usdc") or contract address of an ERC-20 token.
-            destination_address (str): Recipient's address.
-            
-            Returns:
-            str: A message confirming the transfer or describing an error.
-            """
+def store_mapping(nft_id, wallet_id):
+    filename = 'map.json'
+    new_entry = {nft_id: wallet_id}
+    if os.path.exists(filename):
+        with open(filename, 'r') as file:
             try:
-                is_mainnet = agent.wallet.network_id == "base-mainnet"
-                is_usdc = asset_id.lower() == "usdc"
-                gasless = is_mainnet and is_usdc
-                if asset_id.lower() in ["eth", "usdc"]:
-                    transfer = agent.wallet.transfer(amount,
-                                                    asset_id,
-                                                    destination_address,
-                                                    gasless=gasless)
-                    transfer.wait()
-                    gasless_msg = " (gasless)" if gasless else ""
-                    return f"Transferred {amount} {asset_id}{gasless_msg} to {destination_address}"
-                
-                try:
-                    balance = agent.wallet.balance(asset_id)
-                except UnsupportedAssetError:
-                    return f"Error: The asset {asset_id} is not supported on this network. It may have been recently deployed. Please try again in about 30 minutes."
-
-                if balance < amount:
-                    return f"Insufficient balance. You have {balance} {asset_id}, but tried to transfer {amount}."
-
-                transfer = agent.wallet.transfer(amount, asset_id, destination_address)
-                transfer.wait()
-                return f"Transferred {amount} {asset_id} to {destination_address}"
-                    
-            except Exception as e:
-                return f"Error transferring asset: {str(e)}. If this is a custom token, it may have been recently deployed. Please try again in about 30 minutes, as it needs to be indexed by CDP first."
-
-        def mint_nft(contract_address, mint_to):
-            """
-            Mint an NFT to a specified address.
-                
-            Parameters:
-            contract_address (str): Address of the NFT contract.
-            mint_to (str): Address to mint NFT to.
-                
-            Returns:
-            str: Status message about the NFT minting.
-            """
-            try:
-                mint_args = {"to": mint_to, "quantity": "1"}
-
-                mint_invocation = agent.wallet.invoke_contract(
-                    contract_address=contract_address, method="mint", args=mint_args)
-                mint_invocation.wait()
-
-                return f"Successfully minted NFT to {mint_to}"
-
-            except Exception as e:
-                return f"Error minting NFT: {str(e)}"
-            
-        def read_json_data(file_path: str) -> dict:
-            """
-            Reads data from a JSON file and returns it as a dictionary.
-
-            Args:
-                file_path (str): The path to the JSON file.
-
-            Returns:
-                dict: The data read from the JSON file, or None if an error occurred.
-            """
-            try:
-                with open(file_path, 'r') as json_file:
-                    data = json.load(json_file)
-                    return data
-            except FileNotFoundError:
-                print(f"Error: The file {file_path} does not exist.")
+                data = json.load(file)
             except json.JSONDecodeError:
-                print("Error: Failed to decode JSON from the file.")
-            except Exception as e:
-                print(f"An error occurred: {e}")
-            return None
-        
-        load_model = input("Do you want to load an existing model? (yes/no): ").strip().lower()
-        
-        if load_model == 'yes':
-            wallet_id = input("Enter your Wallet ID: ")
-            agent = OnChainAgents(Wallet_Id=wallet_id)
-            print(f"Loaded model for Wallet ID: {wallet_id} and public address {agent.wallet.default_address.address_id}.")
-            file_path = f"DB/{agent.wallet.default_address.address_id}.json"
-            data = read_json_data(file_path)
-            ToolKit = []
-            if data:
-                for key in data["Tools"]:
-                    if key in Tools.keys():
-                        ToolKit.append(Tools[key])
-            based_agent = Agent(
-                model=Ollama(id="llama3.2"),
-                tools=[get_balance, create_token, transfer_asset, mint_nft,ExaTools(api_key=os.getenv("EXA_API_KEY"))]+ToolKit,
-                description=data["Personality"],
-                instructions=[
-                    "Always display the balance when asked.",
-                    "Everything you do is not a simulation but instead real-life actions."
-                ] + [data["Instructions"]],
-            )
-            while True:
-                prompt = input("Ask:")
-                if prompt.lower() == 'exit':
-                    agent.save_wallet()
-                    print("Wallet saved. Exiting...")
-                    break
-                based_agent.print_response(prompt)
-            break
-        
-        elif load_model == 'no':
-            agent = OnChainAgents()
-            prompt1 = input("How do you want your chatbot to be:")
-            print(f"Created a new model with public address {agent.wallet.default_address.address_id}.")
-            creater = ChatbotAnalyzer()
-            tools, concepts = creater.find_tools_and_concepts(prompt1)
-            personality = creater.GeneratePersonality(prompt1)
-            instructions = creater.GenerateInstructions(prompt1)
-            creater.save_to_json(tools, personality, instructions, concepts,agent.wallet.default_address.address_id)
-            file_path = f"DB/{agent.wallet.default_address.address_id}.json"
-            data = read_json_data(file_path)
-            ToolKit = []
-            if data:
-                for key in data["Tools"]:
-                    if key in Tools.keys():
-                        ToolKit.append(Tools[key])
-            based_agent = Agent(
-                model=Ollama(id="llama3.2"),
-                tools=[get_balance, create_token, transfer_asset, mint_nft,ExaTools(api_key=os.getenv("EXA_API_KEY"))]+ToolKit,
-                description=data["Personality"],
-                instructions=[
-                    "Always display the balance when asked.",
-                    "Everything you do is not a simulation but instead real-life actions."
-                ] + [data["Instructions"]],
-            )
-            while True:
-                prompt = input("Ask:")
-                if prompt.lower() == 'exit':
-                    agent.save_wallet()
-                    print("Wallet saved. Exiting...")
-                    break
-                based_agent.print_response(prompt)
-            break
+                data = {}
+    else:
+        data = {}
+    data.update(new_entry)
+    with open(filename, 'w') as file:
+        json.dump(data, file, indent=4)
 
-        else:
-            print("Invalid input. Please enter 'yes' or 'no'.")
-            continue
+def get_wallet_id(nft_id):
+    filename = 'map.json'
+    try:
+        with open(filename, 'r') as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        return "File not found."
+    except json.JSONDecodeError:
+        return "Error decoding JSON."
+    if nft_id in data:
+        return data[nft_id]
+    else:
+        return "NFT ID not found."
 
-main()
+
+def load_agent(NFT_id,prompt):
+    wallet_id = get_wallet_id(NFT_id)
+    agent = OnChainAgents(Wallet_Id=wallet_id)
+    file_path = f"DB/{agent.wallet.default_address.address_id}.json"
+    data = read_json_data(file_path)
+    def get_balance(asset_id) -> str:
+        """
+        Get the balance of a specific asset in the agent's wallet.
+        
+        Parameters:
+        asset_id (str): Asset identifier ("eth", "usdc") or contract address of an ERC-20 token
+        
+        Returns:
+        str: A message showing the current balance of the specified asset.
+        """
+        balance = agent.wallet.balance(asset_id)
+        return f"Current balance of {asset_id}: {balance}"
+
+    def create_token(name, symbol, initial_supply):
+        """
+        Create a new ERC-20 token.
+        
+        Parameters:
+        name (str): The name of the token.
+        symbol (str): The symbol of the token.
+        initial_supply (int): The initial supply of tokens.
+        
+        Returns:
+        str: A message confirming the token creation with details.
+        """
+        deployed_contract = agent.wallet.deploy_token(name, symbol, initial_supply)
+        deployed_contract.wait()
+        return f"Token {name} ({symbol}) created with initial supply of {initial_supply} and contract address {deployed_contract.contract_address}"
+
+    def transfer_asset(amount, asset_id, destination_address):
+        """
+        Transfer an asset to a specific address.
+        
+        Parameters:
+        amount (Union[int, float, Decimal]): Amount to transfer.
+        asset_id (str): Asset identifier ("eth", "usdc") or contract address of an ERC-20 token.
+        destination_address (str): Recipient's address.
+        
+        Returns:
+        str: A message confirming the transfer or describing an error.
+        """
+        try:
+            is_mainnet = agent.wallet.network_id == "base-mainnet"
+            is_usdc = asset_id.lower() == "usdc"
+            gasless = is_mainnet and is_usdc
+            if asset_id.lower() in ["eth", "usdc"]:
+                transfer = agent.wallet.transfer(amount,
+                                                asset_id,
+                                                destination_address,
+                                                gasless=gasless)
+                transfer.wait()
+                gasless_msg = " (gasless)" if gasless else ""
+                return f"Transferred {amount} {asset_id}{gasless_msg} to {destination_address}"
+            
+            try:
+                balance = agent.wallet.balance(asset_id)
+            except UnsupportedAssetError:
+                return f"Error: The asset {asset_id} is not supported on this network. It may have been recently deployed. Please try again in about 30 minutes."
+
+            if balance < amount:
+                return f"Insufficient balance. You have {balance} {asset_id}, but tried to transfer {amount}."
+
+            transfer = agent.wallet.transfer(amount, asset_id, destination_address)
+            transfer.wait()
+            return f"Transferred {amount} {asset_id} to {destination_address}"
+                
+        except Exception as e:
+            return f"Error transferring asset: {str(e)}. If this is a custom token, it may have been recently deployed. Please try again in about 30 minutes, as it needs to be indexed by CDP first."
+
+    def mint_nft(contract_address, mint_to):
+        """
+        Mint an NFT to a specified address.
+            
+        Parameters:
+        contract_address (str): Address of the NFT contract.
+        mint_to (str): Address to mint NFT to.
+            
+        Returns:
+        str: Status message about the NFT minting.
+        """
+        try:
+            mint_args = {"to": mint_to, "quantity": "1"}
+
+            mint_invocation = agent.wallet.invoke_contract(
+                contract_address=contract_address, method="mint", args=mint_args)
+            mint_invocation.wait()
+
+            return f"Successfully minted NFT to {mint_to}"
+
+        except Exception as e:
+            return f"Error minting NFT: {str(e)}"
+    ToolKit = []
+    if data:
+        for key in data["Tools"]:
+            if key in Tools.keys():
+                ToolKit.append(Tools[key])
+    based_agent = Agent(
+        model=Ollama(id="llama3.2"),
+        tools=[get_balance, create_token, transfer_asset, mint_nft,ExaTools(api_key=os.getenv("EXA_API_KEY"))]+ToolKit,
+        description=data["Personality"],
+        instructions=[
+            "Always display the balance when asked.",
+            "Everything you do is not a simulation but instead real-life actions."
+        ] + [data["Instructions"]],
+    )
+    run: RunResponse = based_agent.run(prompt)
+    print(run.content)
+    return run.content
+
+def CreateAgent(prompt,NFT_id):
+    agent = OnChainAgents()
+    data = agent.wallet.export_data()
+    creater = ChatbotAnalyzer()
+    tools, concepts = creater.find_tools_and_concepts(prompt)
+    personality = creater.GeneratePersonality(prompt)
+    instructions = creater.GenerateInstructions(prompt)
+    creater.save_to_json(tools, personality, instructions, concepts,agent.wallet.default_address.address_id)
+    store_mapping(NFT_id,data.wallet_id)
+    agent.save_wallet(data)
+    return

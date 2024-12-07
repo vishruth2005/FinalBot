@@ -5,3 +5,4 @@ wallet_storage
 .env
 my_seed.json
 wallet_ids.txt
+map.json
